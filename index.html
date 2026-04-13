@@ -1,0 +1,585 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Chess & the Combinatorial Abyss</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: 'Georgia', serif;
+    background: #f5f2eb;
+    color: #1a1a1a;
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding: 24px 16px;
+  }
+  h1 { font-size: 1.5rem; font-weight: normal; letter-spacing: 0.04em; margin-bottom: 4px; text-align: center; }
+  .subtitle { font-size: 0.85rem; color: #666; margin-bottom: 24px; text-align: center; font-style: italic; }
+  .main { display: flex; gap: 32px; align-items: flex-start; flex-wrap: wrap; justify-content: center; }
+
+  .board-wrap { display: flex; flex-direction: column; align-items: center; }
+  .board-container { position: relative; display: flex; align-items: center; }
+  #board {
+    display: grid;
+    grid-template-columns: repeat(8, 64px);
+    grid-template-rows: repeat(8, 64px);
+    border: 2px solid #555;
+    box-shadow: 0 4px 16px rgba(0,0,0,0.15);
+  }
+  .cell {
+    width: 64px; height: 64px;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 2.2rem; cursor: pointer; user-select: none;
+    position: relative;
+  }
+  .cell.light { background: #f0d9b5; }
+  .cell.dark  { background: #b58863; }
+  .cell.selected { background: #7fc97f !important; }
+  .cell.possible-move::after {
+    content: ''; position: absolute;
+    width: 24px; height: 24px; border-radius: 50%;
+    background: rgba(0,0,0,0.18);
+  }
+  .cell.possible-capture { box-shadow: inset 0 0 0 4px rgba(0,0,0,0.25); }
+
+  .rank-coords { position: absolute; left: -18px; display: flex; flex-direction: column; }
+  .rank-label { height: 64px; display: flex; align-items: center; font-size: 0.7rem; color: #888; }
+  .coords { display: grid; grid-template-columns: repeat(8, 64px); margin-top: 4px; }
+  .coord { width: 64px; text-align: center; font-size: 0.7rem; color: #888; }
+
+  .board-controls { display: flex; gap: 8px; margin-top: 14px; flex-wrap: wrap; justify-content: center; }
+  button {
+    padding: 7px 14px; border: 1px solid #aaa; background: #fff;
+    border-radius: 4px; cursor: pointer; font-size: 0.85rem;
+    font-family: Georgia, serif; transition: background 0.15s;
+  }
+  button:hover { background: #e8e4dc; }
+  button:disabled { opacity: 0.4; cursor: not-allowed; }
+  .turn-indicator { margin-top: 10px; font-size: 0.9rem; color: #444; font-style: italic; }
+
+  .panel { width: 300px; display: flex; flex-direction: column; gap: 20px; }
+  .stat-box { background: #fff; border: 1px solid #ddd; border-radius: 6px; padding: 16px; }
+  .stat-label { font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.08em; color: #888; margin-bottom: 6px; }
+  .stat-value { font-size: 1.1rem; font-weight: bold; color: #1a1a1a; }
+  .stat-value.huge { font-size: 0.85rem; font-family: 'Courier New', monospace; }
+
+  .log-bar-wrap { background: #fff; border: 1px solid #ddd; border-radius: 6px; padding: 16px; }
+  .log-bar-label { font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.08em; color: #888; margin-bottom: 8px; }
+  .log-bar-track { height: 18px; background: #eee; border-radius: 9px; overflow: hidden; }
+  .log-bar-fill { height: 100%; background: linear-gradient(90deg, #b58863, #7a3e00); border-radius: 9px; transition: width 0.4s ease; }
+  .log-bar-annotations { display: flex; justify-content: space-between; margin-top: 4px; font-size: 0.65rem; color: #aaa; }
+  .log-explanation { font-size: 0.75rem; color: #777; margin-top: 8px; line-height: 1.5; }
+
+  .history-box { background: #fff; border: 1px solid #ddd; border-radius: 6px; padding: 16px; max-height: 180px; overflow-y: auto; }
+  .history-label { font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.08em; color: #888; margin-bottom: 8px; }
+  .move-list { font-size: 0.82rem; color: #444; font-family: 'Courier New', monospace; line-height: 1.8; white-space: pre; }
+
+  .quote { font-size: 0.8rem; color: #888; font-style: italic; line-height: 1.6; border-left: 3px solid #ccc; padding-left: 10px; }
+
+  #aiBtn.active { background: #e8d0a0; border-color: #b58863; }
+</style>
+</head>
+<body>
+
+<h1>Chess & the Combinatorial Abyss</h1>
+<p class="subtitle">Every move narrows an incomprehensible space of possibility</p>
+
+<div class="main">
+  <div class="board-wrap">
+    <div class="board-container">
+      <div class="rank-coords" id="rankCoords"></div>
+      <div id="board"></div>
+    </div>
+    <div class="coords" id="fileCoords"></div>
+    <div class="board-controls">
+      <button onclick="resetGame()">New Game</button>
+      <button id="undoBtn" onclick="undoMove()">Undo</button>
+      <button id="aiBtn" onclick="toggleAI()">▶ AI vs AI</button>
+    </div>
+    <div class="board-controls">
+      <span style="font-size:0.78rem;color:#666;">Speed:</span>
+      <button onclick="setSpeed(600,this)" style="font-weight:bold">Slow</button>
+      <button onclick="setSpeed(300,this)">Normal</button>
+      <button onclick="setSpeed(80,this)">Fast</button>
+    </div>
+    <div class="turn-indicator" id="turnIndicator">White to move</div>
+  </div>
+
+  <div class="panel">
+    <div class="log-bar-wrap">
+      <div class="log-bar-label">Possibility Space Remaining (log scale)</div>
+      <div class="log-bar-track">
+        <div class="log-bar-fill" id="logBarFill" style="width:100%"></div>
+      </div>
+      <div class="log-bar-annotations">
+        <span>1</span><span>10<sup>40</sup></span><span>10<sup>80</sup></span><span>10<sup>120</sup></span>
+      </div>
+      <div class="log-explanation" id="logExplanation">
+        The Shannon number (~10¹²⁰) estimates total possible chess games — more than atoms in the observable universe. Each move eliminates vast branches forever.
+      </div>
+    </div>
+    <div class="stat-box">
+      <div class="stat-label">Estimated Games Still Possible</div>
+      <div class="stat-value huge" id="possibilityDisplay">~10<sup>120</sup></div>
+    </div>
+    <div class="stat-box">
+      <div class="stat-label">Moves Played</div>
+      <div class="stat-value" id="movesPlayed">0</div>
+    </div>
+    <div class="stat-box">
+      <div class="stat-label">Legal Moves Available Now</div>
+      <div class="stat-value" id="legalMoves">20</div>
+    </div>
+    <div class="history-box">
+      <div class="history-label">Move History</div>
+      <div class="move-list" id="moveList">—</div>
+    </div>
+    <div class="quote">"Let us calculate." — Leibniz, imagining all disagreement could be resolved by exhausting the space of possible thoughts.</div>
+  </div>
+</div>
+
+<script>
+// ═══════════════════════════════════════════════════════
+// PIECES & BOARD
+// ═══════════════════════════════════════════════════════
+const GLYPH = {
+  wK:'♔',wQ:'♕',wR:'♖',wB:'♗',wN:'♘',wP:'♙',
+  bK:'♚',bQ:'♛',bR:'♜',bB:'♝',bN:'♞',bP:'♟'
+};
+
+function freshBoard() {
+  return [
+    ['bR','bN','bB','bQ','bK','bB','bN','bR'],
+    ['bP','bP','bP','bP','bP','bP','bP','bP'],
+    [null,null,null,null,null,null,null,null],
+    [null,null,null,null,null,null,null,null],
+    [null,null,null,null,null,null,null,null],
+    [null,null,null,null,null,null,null,null],
+    ['wP','wP','wP','wP','wP','wP','wP','wP'],
+    ['wR','wN','wB','wQ','wK','wB','wN','wR'],
+  ];
+}
+
+// ═══════════════════════════════════════════════════════
+// GAME STATE
+// ═══════════════════════════════════════════════════════
+let board, turn, selected, history, castle, ep, over;
+let aiOn = false, aiTimer = null, aiDelay = 600;
+
+function resetGame() {
+  board = freshBoard();
+  turn = 'w'; selected = null; history = []; over = false;
+  castle = {w:{k:true,q:true},b:{k:true,q:true}};
+  ep = null;
+  if (aiTimer) { clearInterval(aiTimer); aiTimer = null; }
+  if (aiOn) { setTimeout(startAI, 50); }
+  render(); updateUI();
+}
+
+// ═══════════════════════════════════════════════════════
+// RENDER
+// ═══════════════════════════════════════════════════════
+function render() {
+  const el = document.getElementById('board');
+  el.innerHTML = '';
+  const highlights = new Set();
+  const captures = new Set();
+  if (selected) {
+    const mvs = legal(board, selected[0], selected[1], turn, castle, ep);
+    mvs.forEach(m => {
+      if (board[m[0]][m[1]] && board[m[0]][m[1]][0] !== turn) captures.add(m[0]+','+m[1]);
+      else highlights.add(m[0]+','+m[1]);
+    });
+  }
+  for (let r=0;r<8;r++) for (let c=0;c<8;c++) {
+    const cell = document.createElement('div');
+    cell.className = 'cell ' + ((r+c)%2===0?'light':'dark');
+    const k = r+','+c;
+    if (selected && selected[0]===r && selected[1]===c) cell.classList.add('selected');
+    if (highlights.has(k)) cell.classList.add('possible-move');
+    if (captures.has(k)) cell.classList.add('possible-capture');
+    if (board[r][c]) cell.textContent = GLYPH[board[r][c]];
+    cell.onclick = () => click(r,c);
+    el.appendChild(cell);
+  }
+  // coords
+  const rc = document.getElementById('rankCoords');
+  rc.innerHTML = '';
+  for (let r=0;r<8;r++) {
+    const d = document.createElement('div');
+    d.className='rank-label'; d.textContent=8-r; rc.appendChild(d);
+  }
+  const fc = document.getElementById('fileCoords');
+  fc.innerHTML = '';
+  'abcdefgh'.split('').forEach(f => {
+    const d=document.createElement('div'); d.className='coord'; d.textContent=f; fc.appendChild(d);
+  });
+}
+
+// ═══════════════════════════════════════════════════════
+// CLICK HANDLER (human play)
+// ═══════════════════════════════════════════════════════
+function click(r, c) {
+  if (over || aiOn) return;
+  const p = board[r][c];
+  if (selected) {
+    const mvs = legal(board, selected[0], selected[1], turn, castle, ep);
+    const mv = mvs.find(m => m[0]===r && m[1]===c);
+    if (mv) { doMove(selected[0], selected[1], r, c, mv); selected=null; return; }
+    selected = null;
+  }
+  if (p && p[0]===turn) selected = [r,c];
+  render();
+}
+
+// ═══════════════════════════════════════════════════════
+// EXECUTE MOVE
+// ═══════════════════════════════════════════════════════
+function doMove(fr, fc, tr, tc, mv) {
+  const nb = board.map(r=>[...r]);
+  const piece = nb[fr][fc];
+  const captured = nb[tr][tc];
+
+  if (mv.ep) nb[fr][tc] = null;
+  if (mv.castle==='k') { nb[tr][5]=nb[tr][7]; nb[tr][7]=null; }
+  if (mv.castle==='q') { nb[tr][3]=nb[tr][0]; nb[tr][0]=null; }
+  nb[tr][tc] = piece; nb[fr][fc] = null;
+  if (piece==='wP'&&tr===0) nb[tr][tc]='wQ';
+  if (piece==='bP'&&tr===7) nb[tr][tc]='bQ';
+
+  const newCastle = JSON.parse(JSON.stringify(castle));
+  if (piece==='wK'){newCastle.w.k=false;newCastle.w.q=false;}
+  if (piece==='bK'){newCastle.b.k=false;newCastle.b.q=false;}
+  if(fr===7&&fc===7)newCastle.w.k=false; if(fr===7&&fc===0)newCastle.w.q=false;
+  if(fr===0&&fc===7)newCastle.b.k=false; if(fr===0&&fc===0)newCastle.b.q=false;
+
+  let newEP = null;
+  if((piece==='wP'||piece==='bP')&&Math.abs(tr-fr)===2) newEP={r:(fr+tr)/2,c:fc};
+
+  const legalCountNow = allLegal(board, turn, castle, ep).length;
+  history.push({board:board.map(r=>[...r]), turn, castle:JSON.parse(JSON.stringify(castle)), ep, legalCount:legalCountNow, notation:notation(piece,fr,fc,tr,tc,captured,mv)});
+
+  board = nb; castle = newCastle; ep = newEP;
+  turn = turn==='w'?'b':'w';
+  render(); updateUI();
+}
+
+function notation(piece, fr, fc, tr, tc, captured, mv) {
+  const f='abcdefgh';
+  if(mv.castle==='k')return'O-O';
+  if(mv.castle==='q')return'O-O-O';
+  let s = piece[1]==='P'?'':(piece[1]);
+  if(captured||mv.ep){if(piece[1]==='P')s+=f[fc];s+='x';}
+  s+=f[tc]+(8-tr);
+  return s;
+}
+
+// ═══════════════════════════════════════════════════════
+// MOVE GENERATION
+// ═══════════════════════════════════════════════════════
+function raw(b, r, c, t, cr, ep) {
+  const piece = b[r][c]; if(!piece) return [];
+  const type = piece[1]; const moves = []; const opp=t==='w'?'b':'w';
+  const add=(tr,tc,x={})=>{
+    if(tr<0||tr>7||tc<0||tc>7)return false;
+    if(b[tr][tc]&&b[tr][tc][0]===t)return false;
+    moves.push(Object.assign([tr,tc],x)); return !b[tr][tc];
+  };
+  const slide=(dr,dc)=>{let nr=r+dr,nc=c+dc;while(add(nr,nc)){nr+=dr;nc+=dc;}};
+
+  if(type==='P'){
+    const d=t==='w'?-1:1; const s=t==='w'?6:1;
+    if(!b[r+d]?.[c]){add(r+d,c);if(r===s&&!b[r+2*d]?.[c])add(r+2*d,c);}
+    [-1,1].forEach(dc=>{
+      if(b[r+d]?.[c+dc]?.[0]===opp)add(r+d,c+dc);
+      if(ep&&ep.r===r+d&&ep.c===c+dc)moves.push(Object.assign([r+d,c+dc],{ep:true}));
+    });
+  }
+  if(type==='N')[[-2,-1],[-2,1],[-1,-2],[-1,2],[1,-2],[1,2],[2,-1],[2,1]].forEach(([dr,dc])=>add(r+dr,c+dc));
+  if(type==='B'||type==='Q')[[-1,-1],[-1,1],[1,-1],[1,1]].forEach(([dr,dc])=>slide(dr,dc));
+  if(type==='R'||type==='Q')[[-1,0],[1,0],[0,-1],[0,1]].forEach(([dr,dc])=>slide(dr,dc));
+  if(type==='K'){
+    [[-1,-1],[-1,0],[-1,1],[0,-1],[0,1],[1,-1],[1,0],[1,1]].forEach(([dr,dc])=>add(r+dr,c+dc));
+    const row=t==='w'?7:0;
+    if(r===row&&c===4){
+      if(cr[t].k&&!b[row][5]&&!b[row][6]&&!inCheck(b,t)){
+        const m=b.map(r=>[...r]);m[row][5]=m[row][4];m[row][4]=null;
+        if(!inCheck(m,t))moves.push(Object.assign([row,6],{castle:'k'}));
+      }
+      if(cr[t].q&&!b[row][3]&&!b[row][2]&&!b[row][1]&&!inCheck(b,t)){
+        const m=b.map(r=>[...r]);m[row][3]=m[row][4];m[row][4]=null;
+        if(!inCheck(m,t))moves.push(Object.assign([row,2],{castle:'q'}));
+      }
+    }
+  }
+  return moves;
+}
+
+function inCheck(b, t) {
+  let kr=-1,kc=-1;
+  for(let r=0;r<8;r++)for(let c=0;c<8;c++)if(b[r][c]===t+'K'){kr=r;kc=c;}
+  if(kr===-1)return true;
+  const opp=t==='w'?'b':'w';
+  for(let r=0;r<8;r++)for(let c=0;c<8;c++){
+    if(b[r][c]?.[0]===opp){
+      const rm=raw(b,r,c,opp,{w:{k:false,q:false},b:{k:false,q:false}},null);
+      if(rm.some(m=>m[0]===kr&&m[1]===kc))return true;
+    }
+  }
+  return false;
+}
+
+function legal(b, r, c, t, cr, ep) {
+  return raw(b,r,c,t,cr,ep).filter(mv=>{
+    const nb=b.map(r=>[...r]); const p=nb[r][c];
+    if(mv.ep)nb[r][mv[1]]=null;
+    if(mv.castle==='k'){nb[mv[0]][mv[1]-1]=nb[mv[0]][7];nb[mv[0]][7]=null;}
+    if(mv.castle==='q'){nb[mv[0]][mv[1]+1]=nb[mv[0]][0];nb[mv[0]][0]=null;}
+    nb[mv[0]][mv[1]]=p; nb[r][c]=null;
+    return !inCheck(nb,t);
+  });
+}
+
+function allLegal(b, t, cr, ep) {
+  const all=[];
+  for(let r=0;r<8;r++)for(let c=0;c<8;c++)
+    if(b[r][c]?.[0]===t)all.push(...legal(b,r,c,t,cr,ep));
+  return all;
+}
+
+// ═══════════════════════════════════════════════════════
+// UNDO
+// ═══════════════════════════════════════════════════════
+function undoMove() {
+  if(history.length===0||aiOn)return;
+  const s=history.pop();
+  board=s.board; turn=s.turn; castle=s.castle; ep=s.ep; over=false;
+  selected=null; render(); updateUI();
+}
+
+// ═══════════════════════════════════════════════════════
+// AI
+// ═══════════════════════════════════════════════════════
+const PIECE_VAL = {P:100,N:320,B:330,R:500,Q:900,K:20000};
+
+// Piece-square tables (white's perspective)
+const PST = {
+  P:[[0,0,0,0,0,0,0,0],[50,50,50,50,50,50,50,50],[10,10,20,30,30,20,10,10],[5,5,10,25,25,10,5,5],[0,0,0,20,20,0,0,0],[5,-5,-10,0,0,-10,-5,5],[5,10,10,-20,-20,10,10,5],[0,0,0,0,0,0,0,0]],
+  N:[[-50,-40,-30,-30,-30,-30,-40,-50],[-40,-20,0,0,0,0,-20,-40],[-30,0,10,15,15,10,0,-30],[-30,5,15,20,20,15,5,-30],[-30,0,15,20,20,15,0,-30],[-30,5,10,15,15,10,5,-30],[-40,-20,0,5,5,0,-20,-40],[-50,-40,-30,-30,-30,-30,-40,-50]],
+  B:[[-20,-10,-10,-10,-10,-10,-10,-20],[-10,0,0,0,0,0,0,-10],[-10,0,5,10,10,5,0,-10],[-10,5,5,10,10,5,5,-10],[-10,0,10,10,10,10,0,-10],[-10,10,10,10,10,10,10,-10],[-10,5,0,0,0,0,5,-10],[-20,-10,-10,-10,-10,-10,-10,-20]],
+  R:[[0,0,0,0,0,0,0,0],[5,10,10,10,10,10,10,5],[-5,0,0,0,0,0,0,-5],[-5,0,0,0,0,0,0,-5],[-5,0,0,0,0,0,0,-5],[-5,0,0,0,0,0,0,-5],[-5,0,0,0,0,0,0,-5],[0,0,0,5,5,0,0,0]],
+  Q:[[-20,-10,-10,-5,-5,-10,-10,-20],[-10,0,0,0,0,0,0,-10],[-10,0,5,5,5,5,0,-10],[-5,0,5,5,5,5,0,-5],[0,0,5,5,5,5,0,-5],[-10,5,5,5,5,5,0,-10],[-10,0,5,0,0,0,0,-10],[-20,-10,-10,-5,-5,-10,-10,-20]],
+  K:[[-30,-40,-40,-50,-50,-40,-40,-30],[-30,-40,-40,-50,-50,-40,-40,-30],[-30,-40,-40,-50,-50,-40,-40,-30],[-30,-40,-40,-50,-50,-40,-40,-30],[-20,-30,-30,-40,-40,-30,-30,-20],[-10,-20,-20,-20,-20,-20,-20,-10],[20,20,0,0,0,0,20,20],[20,30,10,0,0,10,30,20]]
+};
+
+function evaluate(b) {
+  let s=0;
+  for(let r=0;r<8;r++)for(let c=0;c<8;c++){
+    const p=b[r][c]; if(!p) continue;
+    const col=p[0], type=p[1];
+    const val=PIECE_VAL[type]||0;
+    const pstRow=col==='w'?r:7-r;
+    const pos=PST[type]?PST[type][pstRow][c]:0;
+    s+=col==='w'?val+pos:-(val+pos);
+  }
+  return s;
+}
+
+function minimax(b, depth, alpha, beta, maxing, t, cr, ep) {
+  const moves = taggedMoves(b, t, cr, ep);
+  if(moves.length===0) return inCheck(b,t)?(maxing?-99999:99999):0;
+  if(depth===0) return evaluate(b);
+  const opp=t==='w'?'b':'w';
+  if(maxing){
+    let best=-Infinity;
+    for(const m of moves){
+      const nb=applyM(b,m,cr,ep);
+      const v=minimax(nb.b,depth-1,alpha,beta,false,opp,nb.cr,nb.ep);
+      best=Math.max(best,v); alpha=Math.max(alpha,v);
+      if(beta<=alpha)break;
+    }
+    return best;
+  } else {
+    let best=Infinity;
+    for(const m of moves){
+      const nb=applyM(b,m,cr,ep);
+      const v=minimax(nb.b,depth-1,alpha,beta,true,opp,nb.cr,nb.ep);
+      best=Math.min(best,v); beta=Math.min(beta,v);
+      if(beta<=alpha)break;
+    }
+    return best;
+  }
+}
+
+function taggedMoves(b, t, cr, ep) {
+  const out=[];
+  for(let r=0;r<8;r++)for(let c=0;c<8;c++){
+    if(b[r][c]?.[0]===t){
+      legal(b,r,c,t,cr,ep).forEach(m=>out.push({fr:r,fc:c,tr:m[0],tc:m[1],mv:m}));
+    }
+  }
+  return out;
+}
+
+function applyM(b, tagged, cr, ep) {
+  const nb=b.map(r=>[...r]);
+  const {fr,fc,tr,tc,mv}=tagged;
+  const piece=nb[fr][fc];
+  if(mv.ep)nb[fr][tc]=null;
+  if(mv.castle==='k'){nb[tr][tc-1]=nb[tr][7];nb[tr][7]=null;}
+  if(mv.castle==='q'){nb[tr][tc+1]=nb[tr][0];nb[tr][0]=null;}
+  nb[tr][tc]=piece; nb[fr][fc]=null;
+  if(piece==='wP'&&tr===0)nb[tr][tc]='wQ';
+  if(piece==='bP'&&tr===7)nb[tr][tc]='bQ';
+  const nc=JSON.parse(JSON.stringify(cr));
+  if(piece==='wK'){nc.w.k=false;nc.w.q=false;}
+  if(piece==='bK'){nc.b.k=false;nc.b.q=false;}
+  if(fr===7&&fc===7)nc.w.k=false; if(fr===7&&fc===0)nc.w.q=false;
+  if(fr===0&&fc===7)nc.b.k=false; if(fr===0&&fc===0)nc.b.q=false;
+  let nep=null;
+  if((piece==='wP'||piece==='bP')&&Math.abs(tr-fr)===2)nep={r:(fr+tr)/2,c:fc};
+  return {b:nb,cr:nc,ep:nep};
+}
+
+// Track position hashes to detect repetition
+function boardKey(b, t) {
+  return t + b.map(r=>r.map(x=>x||'.').join('')).join('|');
+}
+
+function bestMove() {
+  const moves = taggedMoves(board, turn, castle, ep);
+  if(moves.length===0)return null;
+  moves.sort(()=>Math.random()-0.5);
+  const maxing = turn==='w';
+  let bestVal = maxing?-Infinity:Infinity;
+  let best = moves[0];
+  
+  // Build position history for repetition detection
+  const posHistory = {};
+  history.forEach(s => {
+    const k = boardKey(s.board, s.turn);
+    posHistory[k] = (posHistory[k]||0) + 1;
+  });
+
+  for(const m of moves){
+    const nb=applyM(board,m,castle,ep);
+    const opp=turn==='w'?'b':'w';
+    let v=minimax(nb.b,2,-Infinity,Infinity,!maxing,opp,nb.cr,nb.ep);
+    
+    // Penalize positions we've already visited (discourages repetition)
+    const k = boardKey(nb.b, opp);
+    const visits = posHistory[k]||0;
+    v -= (maxing?1:-1) * visits * 50;
+    
+    if(maxing?v>bestVal:v<bestVal){bestVal=v;best=m;}
+  }
+  return best;
+}
+
+function aiStep() {
+  if(over){
+    clearInterval(aiTimer); aiTimer=null; aiOn=false;
+    document.getElementById('aiBtn').textContent='▶ AI vs AI';
+    document.getElementById('aiBtn').classList.remove('active');
+    document.getElementById('undoBtn').disabled=false;
+    return;
+  }
+  const m = bestMove();
+  if(!m){over=true;return;}
+  doMove(m.fr,m.fc,m.tr,m.tc,m.mv);
+}
+
+function startAI() {
+  if(aiTimer)clearInterval(aiTimer);
+  aiTimer = setInterval(aiStep, aiDelay);
+}
+
+function toggleAI() {
+  aiOn = !aiOn;
+  const btn=document.getElementById('aiBtn');
+  const undo=document.getElementById('undoBtn');
+  if(aiOn){
+    btn.textContent='⏹ Stop AI'; btn.classList.add('active');
+    undo.disabled=true;
+    // reset to fresh game
+    board=freshBoard(); turn='w'; selected=null; history=[];
+    castle={w:{k:true,q:true},b:{k:true,q:true}}; ep=null; over=false;
+    render(); updateUI();
+    startAI();
+  } else {
+    btn.textContent='▶ AI vs AI'; btn.classList.remove('active');
+    undo.disabled=false;
+    if(aiTimer){clearInterval(aiTimer);aiTimer=null;}
+  }
+}
+
+function setSpeed(ms, btn) {
+  aiDelay=ms;
+  document.querySelectorAll('.board-controls button').forEach(b=>b.style.fontWeight='normal');
+  btn.style.fontWeight='bold';
+  if(aiOn&&aiTimer){clearInterval(aiTimer);startAI();}
+}
+
+// ═══════════════════════════════════════════════════════
+// UI UPDATE
+// ═══════════════════════════════════════════════════════
+const SHANNON = 120;
+
+function updateUI() {
+  const n = history.length;
+  const legalNow = allLegal(board, turn, castle, ep).length;
+
+  let usedLog=0;
+  history.forEach(s=>{if(s.legalCount>0)usedLog+=Math.log10(s.legalCount);});
+  const remLog = Math.max(0, SHANNON-usedLog);
+  const pct = remLog/SHANNON*100;
+  const exp = Math.round(remLog);
+
+  if(legalNow===0){
+    document.getElementById('logBarFill').style.width='0%';
+    document.getElementById('possibilityDisplay').innerHTML='0';
+    document.getElementById('movesPlayed').textContent=n;
+    document.getElementById('legalMoves').textContent='0';
+    const msg = inCheck(board,turn)
+      ? (turn==='w'?'Black':'White')+' wins by checkmate!'
+      : 'Stalemate — draw!';
+    document.getElementById('turnIndicator').textContent=msg;
+    document.getElementById('logExplanation').textContent='The game tree has collapsed to a single endpoint — no futures remain.';
+    over=true;
+    if(aiTimer){clearInterval(aiTimer);aiTimer=null;}
+  } else {
+    document.getElementById('turnIndicator').textContent=(turn==='w'?'White':'Black')+' to move';
+    document.getElementById('logBarFill').style.width=pct+'%';
+    document.getElementById('movesPlayed').textContent=n;
+    document.getElementById('legalMoves').textContent=legalNow;
+    if(exp>6) document.getElementById('possibilityDisplay').innerHTML=`~10<sup>${exp}</sup>`;
+    else if(exp>0) document.getElementById('possibilityDisplay').textContent=`~${Math.round(Math.pow(10,remLog)).toLocaleString()}`;
+    else document.getElementById('possibilityDisplay').textContent='1 — this exact game';
+    document.getElementById('logExplanation').textContent = n===0
+      ? `The Shannon number (~10¹²⁰) estimates total possible chess games. Each move eliminates futures proportional to legal moves available at that moment.`
+      : `After ${n} move${n>1?'s':''}, ~10^${exp} games remain. ${Math.round(100-pct)}% of the possibility space is permanently foreclosed.`;
+  }
+
+  // move list
+  const ml=document.getElementById('moveList');
+  if(history.length===0){ml.textContent='—';return;}
+  let txt='';
+  for(let i=0;i<history.length;i+=2){
+    txt+=`${Math.floor(i/2)+1}. ${history[i].notation}`;
+    if(history[i+1])txt+=` ${history[i+1].notation}`;
+    txt+='\n';
+  }
+  ml.textContent=txt;
+  ml.scrollTop=ml.scrollHeight;
+}
+
+// ═══════════════════════════════════════════════════════
+// INIT
+// ═══════════════════════════════════════════════════════
+resetGame();
+</script>
+</body>
+</html>
